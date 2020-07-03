@@ -120,7 +120,6 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 	
-	/*
 	adc1.csPort = *SPI2_CS_GPIO_Port;
 	adc1.csPin  = SPI2_CS_Pin;
 	adc1.drdyPort = *SPI2_DRDY_GPIO_Port;
@@ -129,12 +128,10 @@ int main(void)
 	adc1.oscFreq = ADS125X_OSC_FREQ;
 	adc1.hspix = &hspi2;
 	
+	printf("\n");
+	printf("config...\n");
 	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_2_5SPS, ADS125X_PGA1, 0);
-	*/
-	
-
-	
-	
+	printf("...done\n");
 	
 	int32_t adsCode = 0;
 	float volt = 0.0f;
@@ -142,94 +139,6 @@ int main(void)
 	uint8_t spiRx[5];
 	float pga = 1.0f;
 	float vref = 2.5f;
-	
-	// reset
-	printf("reset...\n");
-	spiDat[0] = ADS125X_CMD_RESET;		
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 1, 10);
-	HAL_Delay(5);
-	
-	// read ID and STATUS
-	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_STATUS;
-	spiDat[1] = 1 -1; // read 1 bytes
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-	HAL_Delay(1);
-	HAL_SPI_Receive(&hspi2, spiDat, 1, 10);
-	printf("Status: %#.2x\n", spiDat[0]);
-	printf("ID: %#.2x\n", (spiDat[0] & 0xF0)>>4 );
-	
-	// stop continous data transfer
-	spiDat[0] = ADS125X_CMD_SDATAC;
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 1, 10);
-	HAL_Delay(1);
-	
-	// set CLKOUT, PGA, Data Rate and GPIOs
-	// read back
-	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_ADCON;
-	spiDat[1] = 3 -1; // read 3 bytes
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-	HAL_Delay(1);
-	HAL_SPI_Receive(&hspi2, spiRx, 3, 10);
-	printf("ADCON: %#.2x\n", spiRx[0]);
-	printf("DRATE: %#.2x\n", spiRx[1]);
-	printf("IO   : %#.2x\n", spiRx[2]);
-	
-	printf("attempting config...\n");
-	spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_ADCON;	
-	spiDat[1] = 3 -1;  // payload length = 3 bytes -1
-	spiDat[2] = ADS125X_CLKOUT_1 | ADS125X_PGA1; // CLKOUT = fclk, Sensor Detect = off, PGA = 1
-	spiDat[3] = ADS125X_DRATE_2_5SPS;
-	spiDat[4] = 0x00;  // all GPIOs are outputs (because left floating) - D0 is CLKOUT
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 5, 10);
-	HAL_Delay(1);
-	// read back
-	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_ADCON;
-	spiDat[1] = 3 -1; // read 1 bytes
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-	HAL_Delay(1);
-	HAL_SPI_Receive(&hspi2, spiRx, 3, 10);
-	printf("ADCON: %#.2x / %#.2x\n", spiRx[0], spiDat[2]);
-	printf("DRATE: %#.2x / %#.2x\n", spiRx[1], spiDat[3]);
-	printf("IO   : %#.2x / %#.2x\n", spiRx[2], spiDat[4]);
-	
-	// read back
-	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_MUX;
-	spiDat[1] = 1 -1; // read 1 bytes
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-	HAL_Delay(1);
-	HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
-	printf("MUX  : %#.2x\n", spiRx[0]);
-	
-	printf("config MUX...\n");
-	spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
-	spiDat[1] = 1 -1;  // payload length = 3 bytes -1
-	spiDat[2] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 3, 10);
-	HAL_Delay(1);
-	// read back
-	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_MUX;
-	spiDat[1] = 1 -1; // read 1 bytes
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-	HAL_Delay(1);
-	HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
-	printf("MUX  : %#.2x\n", spiRx[0]);
-	
-	
-	// reset
-	printf("calibration...\n");
-	spiDat[0] = ADS125X_CMD_SELFCAL;		
-	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-	HAL_SPI_Transmit(&hspi2, spiDat, 1, 10);
-	HAL_Delay(5);
 	
 	/** 
 PROOF OF HARDCODE WORKING
@@ -256,6 +165,21 @@ MUX  : 0x23
 -4.9361495972 (0xff81a274)
 	*/
 	
+/**
+config...
+STATUS: 0x30
+ADCON: 0x20
+DRATE: 0x03
+IO   : 0x01
+...done
+MUX  : 0x01
+RDATA: 0057e9
+MUX  : 0x23
+RDATA: 0057e9
+0.013414027169347, 0.013414027169347
+
+*/
+	
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -266,7 +190,8 @@ MUX  : 0x23
 
     /* USER CODE BEGIN 3 */
 		
-		printf("config MUX (0, 1)...\n");
+		
+/*HARDCODE MACHEN SO: */
 		spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
 		spiDat[1] = 1 -1;  // payload length = 3 bytes -1
 		spiDat[2] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
@@ -281,22 +206,13 @@ MUX  : 0x23
 		HAL_Delay(1);
 		HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
 		printf("MUX  : %#.2x\n", spiRx[0]);
-		
+		//ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN0, ADS125X_MUXN_AIN1);
 		// read Sensor
-		spiDat[0] = ADS125X_CMD_RDATA;
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 1, 10);
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, spiRx, 3, 10);
-		adsCode = (spiRx[0] << 16) | (spiRx[1] << 8) | (spiRx[2]);
-		// Vin = Code * 2 * (Vrefp - Vrefn) / ( PGA * 0x7FFFFF )
-		if(adsCode & 0x800000) adsCode |= 0xff000000;
-		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
-		volt = ( (float)adsCode * (2.0f * vref) ) / ( pga * 8388607.0f );
+		volt = ADS125X_ADC_ReadVolt(&adc1);
 		printf("%.10f (%#.6x)\n", volt, adsCode);
-		HAL_Delay(1);
+		HAL_Delay(250);
 		
-		printf("config MUX (2, 3)...\n");
+		
 		spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
 		spiDat[1] = 1 -1;  // payload length = 3 bytes -1
 		spiDat[2] = ADS125X_MUXP_AIN2 | ADS125X_MUXN_AIN3;
@@ -311,32 +227,30 @@ MUX  : 0x23
 		HAL_Delay(1);
 		HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
 		printf("MUX  : %#.2x\n", spiRx[0]);
-		
+		// ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN2, ADS125X_MUXN_AIN3);
 		// read Sensor
-		spiDat[0] = ADS125X_CMD_RDATA;
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 1, 10);
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, spiRx, 3, 10);
-		adsCode = (spiRx[0] << 16) | (spiRx[1] << 8) | (spiRx[2]);
-		
-		// Vin = Code * 2 * (Vrefp - Vrefn) / ( PGA * 0x7FFFFF )
-		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
-    if(adsCode & 0x800000) adsCode |= 0xff000000;
-		volt = ( (float)adsCode * (2.0f * vref) ) / ( pga * 8388607.0f );
+		volt = ADS125X_ADC_ReadVolt(&adc1);
 		printf("%.10f (%#.6x)\n", volt, adsCode);
-		HAL_Delay(1);
+		HAL_Delay(250);
 		
-		
+/* LIBRARY MACHEN SO: */
+/* ALI NIX SCHULD: */
 		/*
 		float volt[2] = {0.0f, 0.0f};
-		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN0, ADS125X_MUXN_AINCOM);
+		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN0, ADS125X_MUXN_AIN1);
 		volt[0] = ADS125X_ADC_ReadVolt(&adc1);
-		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN2, ADS125X_MUXN_AINCOM);
-		volt[1] = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.15f, %.15f\n", volt[0], volt[1]);
+		printf("%.15f\n", volt[0]);
 		HAL_Delay(250);
+		
+		
+		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN2, ADS125X_MUXN_AIN3);
+		ADS125X_CMD_Send(&adc1, ADS125X_CMD_SYNC);
+		HAL_Delay(100);
+		volt[1] = ADS125X_ADC_ReadVolt(&adc1);
+		printf("%.15f\n", volt[1]);
+		HAL_Delay(150);
 		*/
+		
   }
   /* USER CODE END 3 */
 	

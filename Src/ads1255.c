@@ -36,7 +36,7 @@ SOFTWARE.
 #include <stdint.h>
 #include "ads1255.h"
 
-// #define DEBUG_ADS1255
+#define DEBUG_ADS1255
 
 #ifdef DEBUG_ADS1255
 #include <stdio.h>
@@ -138,15 +138,26 @@ void ADS125X_ADC_Code2Volt (ADS125X_t *ads, int32_t *pCode, float *pVolt, uint16
   * @return <float> voltage value on analog input
   * @see    Datasheet Fig. 30 RDATA Command Sequence
   */
+		
+/* LIBRARY MACHEN SO: */
+/* ALI NIX SCHULD: */
 float ADS125X_ADC_ReadVolt (ADS125X_t *ads){
-	uint8_t spiRx[3];
-	ADS125X_CMD_Send(ads, ADS125X_CMD_RDATA);
+	uint8_t spiRx[3] = {0,0,0};
+	spiRx[0] = ADS125X_CMD_RDATA;
+	
 	ADS125X_CS(ads, 1);
-	HAL_SPI_Transmit(ads->hspix, spiRx, 3, 10);
+	ADS125X_DRDY_Wait(ads);
+	HAL_SPI_Transmit(ads->hspix, spiRx, 1, 10);
+	HAL_Delay(1);
+	HAL_SPI_Receive(ads->hspix, spiRx, 3, 10);
 	ADS125X_CS(ads, 0);
 	
-	uint32_t adsCode = (spiRx[0] << 16) | (spiRx[1] << 8) | (spiRx[2]);
-	HAL_SPI_Receive(ads->hspix, spiRx, 3, 10);
+#ifdef DEBUG_ADS1255
+	printf("RDATA: %#.2x%.2x%.2x\n", spiRx[0], spiRx[1], spiRx[2]);
+#endif
+	
+	// must be signed integer for 2's complement to work
+	int32_t adsCode = (spiRx[0] << 16) | (spiRx[1] << 8) | (spiRx[2]);
   if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
 	// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
 	return ( (float)adsCode * (2.0f * ads->vref) ) / ( ads->pga * 8388607.0f );  // 0x7fffff = 8388607.0f
@@ -195,6 +206,7 @@ uint8_t ADS125X_Register_Write(ADS125X_t *ads, uint8_t reg, uint8_t data)
   ADS125X_CS(ads, 1);
 	ADS125X_DRDY_Wait(ads);
 	HAL_SPI_Transmit(ads->hspix, spiTx, 3, 10);
+	HAL_Delay(1);
   ADS125X_CS(ads, 0);
 	return 0;
 }
@@ -237,17 +249,20 @@ void ADS125X_Channel_Set(ADS125X_t *ads, int8_t channel)
   */
 uint8_t ADS125X_ChannelDiff_Set(ADS125X_t *ads, int8_t p_chan, int8_t n_chan)
 {
-  uint8_t channels = ((p_chan << 4)&0xF0) | (n_chan & 0x0F);
+  // uint8_t channels = ((p_chan << 4)&0xF0) | (n_chan & 0x0F);
 
-  ADS125X_Register_Write(ads, ADS125X_REG_MUX, channels);
+  ADS125X_Register_Write(ads, ADS125X_REG_MUX, p_chan | n_chan);
   ADS125X_CMD_Send(ads, ADS125X_CMD_SYNC);
   ADS125X_CMD_Send(ads, ADS125X_CMD_WAKEUP);
+#ifdef DEBUG_ADS1255
+	uint8_t tmp = 0;
+	ADS125X_Register_Read(ads, ADS125X_REG_MUX, &tmp, 1);
+	printf("MUX  : %#.2x\n", tmp);
+#endif
+  // ADS125X_CMD_Send(ads, ADS125X_CMD_SYNC);
+  // ADS125X_CMD_Send(ads, ADS125X_CMD_WAKEUP);
   return 0;
 }
-
-
-
-
 
 
 /*
