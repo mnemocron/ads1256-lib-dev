@@ -34,7 +34,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define ADC_SAMPLEBUF_SIZE 32
+#define ADC_DMA_BUF_SIZE (7*ADC_SAMPLEBUF_SIZE)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,6 +52,8 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 ADS125X_t adc1;
+volatile uint8_t dmaTx[ADC_DMA_BUF_SIZE];
+volatile uint8_t dmaRx[ADC_DMA_BUF_SIZE];
 
 /* USER CODE END PV */
 
@@ -133,52 +136,30 @@ int main(void)
 	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_2_5SPS, ADS125X_PGA1, 0);
 	printf("...done\n");
 	
-	int32_t adsCode = 0;
-	float volt = 0.0f;
-	uint8_t spiDat[5];
-	uint8_t spiRx[5];
-	float pga = 1.0f;
-	float vref = 2.5f;
-	
-	/** 
-PROOF OF HARDCODE WORKING
-
-reset...
-Status: 0x30
-ID: 0x03
-ADCON: 0x20
-DRATE: 0xf0
-IO   : 0xe1
-attempting config...
-ADCON: 0x20 / 0x20
-DRATE: 0x03 / 0x03
-IO   : 0x01 / 00
-MUX  : 0x01
-config MUX...
-MUX  : 0x01
-calibration...
-config MUX (0, 1)...
-MUX  : 0x01
--4.9360775948 (0xff81a2ed)
-config MUX (2, 3)...
-MUX  : 0x23
--4.9361495972 (0xff81a274)
+	/**
+	i:   | 00,   01,   02,   03,   04,   05,   06,   07
+	data | WREG, AIN,  WKUP, RDAT, 0x00, 0x00, 0x00, ...  
 	*/
+	uint8_t chan = 0;
+	for(uint32_t i=0; i<ADC_DMA_BUF_SIZE; i++){
+		dmaTx[i] = 0;
+		if(i%7 == 0) dmaTx[i] = ADS125X_CMD_WREG | ADS125X_REG_MUX;
+		if(i%7 == 1){
+			if(chan == 0){
+				dmaTx[i] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
+				chan = 1;
+			}else{
+				dmaTx[i] = ADS125X_MUXP_AIN2 | ADS125X_MUXN_AIN3;
+				chan = 0;
+			}
+		}
+		if(i%7 == 2) dmaTx[i] = ADS125X_CMD_WAKEUP;
+		if(i%7 == 3) dmaTx[i] = ADS125X_CMD_RDATA;
+		
+		dmaRx[i] = 0;
+		printf("%#.2x\n", dmaTx[i]);
+	}
 	
-/**
-config...
-STATUS: 0x30
-ADCON: 0x20
-DRATE: 0x03
-IO   : 0x01
-...done
-MUX  : 0x01
-RDATA: 0057e9
-MUX  : 0x23
-RDATA: 0057e9
-0.013414027169347, 0.013414027169347
-
-*/
 	
   /* USER CODE END 2 */
 
@@ -189,67 +170,8 @@ RDATA: 0057e9
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		
-		
-/*HARDCODE MACHEN SO: */
-		spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
-		spiDat[1] = 1 -1;  // payload length = 3 bytes -1
-		spiDat[2] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 3, 10);
-		HAL_Delay(1);
-		// read back
-		spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_MUX;
-		spiDat[1] = 1 -1; // read 1 bytes
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
-		printf("MUX  : %#.2x\n", spiRx[0]);
-		//ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN0, ADS125X_MUXN_AIN1);
-		// read Sensor
-		volt = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.10f (%#.6x)\n", volt, adsCode);
+		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 		HAL_Delay(250);
-		
-		
-		spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
-		spiDat[1] = 1 -1;  // payload length = 3 bytes -1
-		spiDat[2] = ADS125X_MUXP_AIN2 | ADS125X_MUXN_AIN3;
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 3, 10);
-		HAL_Delay(1);
-		// read back
-		spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_MUX;
-		spiDat[1] = 1 -1; // read 1 bytes
-		while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
-		HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
-		printf("MUX  : %#.2x\n", spiRx[0]);
-		// ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN2, ADS125X_MUXN_AIN3);
-		// read Sensor
-		volt = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.10f (%#.6x)\n", volt, adsCode);
-		HAL_Delay(250);
-		
-/* LIBRARY MACHEN SO: */
-/* ALI NIX SCHULD: */
-		/*
-		float volt[2] = {0.0f, 0.0f};
-		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN0, ADS125X_MUXN_AIN1);
-		volt[0] = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.15f\n", volt[0]);
-		HAL_Delay(250);
-		
-		
-		ADS125X_ChannelDiff_Set(&adc1, ADS125X_MUXP_AIN2, ADS125X_MUXN_AIN3);
-		ADS125X_CMD_Send(&adc1, ADS125X_CMD_SYNC);
-		HAL_Delay(100);
-		volt[1] = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.15f\n", volt[1]);
-		HAL_Delay(150);
-		*/
 		
   }
   /* USER CODE END 3 */
