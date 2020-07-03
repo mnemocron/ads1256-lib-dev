@@ -1,0 +1,285 @@
+/*******************************************************************************
+ * @file        ads1255.h
+ * @brief       C Library for ads1255/ads1256 family of Analog to Digital
+ *              Conterters (ADC)
+ * @details     This file implements the functionalities of the ADC.
+ * @version     1.0
+ * @author      Simon Burkhardt
+ * @date        2020.05.22
+ * @copyright   (c) 2020 eta systems GmbH
+********************************************************************************
+ * @note        Parts of this library are based on Adien Akhmads Arduino Library 
+
+MIT License
+
+Copyright (c) 2016 Adien Akhmad
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#include <stdint.h>
+#include "ads1255.h"
+#include "main.h"
+
+
+float _conversionFactor = 0.001f;
+float _VREF = 2.5f;
+float _pga = 1.0f;
+
+extern SPI_HandleTypeDef hspi2;
+
+uint8_t ADS125X_Delay_Cycles(ADS125X_t *ads, uint32_t cycles)
+{
+  cycles = cycles / 3;
+  while(cycles > 1){
+		cycles = cycles -1;
+  }
+	return 0;
+}
+
+uint8_t ADS125X_CS(ADS125X_t *ads, uint8_t on)
+{
+  if(on) on = 0;
+  else on = 1;
+  HAL_GPIO_WritePin( &ads->csPort, ads->csPin, on);
+	return 0;
+}
+
+uint8_t ADS125X_Register_Read(ADS125X_t *ads, uint8_t reg, uint8_t* pData)
+{
+  ADS125X_CS(ads, 1);
+  uint8_t ds = ADS125X_CMD_RREG | reg;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  ds = 0;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  HAL_Delay(1); // t6 delay (50*tCLKIN)
+
+  HAL_SPI_TransmitReceive(ads->hspix, &ds, pData, 1, 1);
+  //HAL_Delay(1); // t11 delay
+  ADS125X_CS(ads, 0);
+	return 0;
+}
+
+uint8_t ADS125X_Register_Write(ADS125X_t *ads, uint8_t reg, uint8_t* pData)
+{
+  ADS125X_CS(ads, 1);
+  uint8_t ds = ADS125X_CMD_WREG | reg;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  ds = 0;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  HAL_SPI_Transmit(ads->hspix, pData, 1, 1);
+  ADS125X_CS(ads, 0);
+	return 0;
+}
+
+uint8_t ADS125X_CMD_Send(ADS125X_t *ads, uint8_t cmd)
+{
+  ADS125X_CS(ads, 1);
+  ADS125X_DRDY_Wait(ads);
+  uint8_t ds = cmd;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  ADS125X_CS(ads, 0);
+	return 0;
+}
+
+void ADS125X_setConversionFactor(ADS125X_t *ads, float val)
+{
+  ads->convFactor = val;
+}
+
+float ADS125X_Read_Channel(ADS125X_t *ads) {
+  ADS125X_CS(ads, 1);
+  uint8_t ds = ADS125X_CMD_RDATA;
+  HAL_SPI_Transmit(ads->hspix, &ds, 1, 1);
+  HAL_Delay(1);  // t6
+  float adsCode = ADS125X_read_float32(ads);
+  ADS125X_CS(ads, 0);
+  return ((adsCode / 0x7FFFFF) * ((2 * ads->vref) / (float)ads->pga)) * ads->convFactor;
+}
+
+// Call this ONLY after RDATA command
+uint32_t ADS125X_read_uint24(ADS125X_t *ads) {
+  uint8_t _highByte, _midByte, _lowByte;
+  uint32_t value;
+  uint8_t ds = ADS125X_CMD_WAKEUP;
+  HAL_SPI_TransmitReceive(ads->hspix, &ds, &_highByte, 1, 1);
+  HAL_SPI_TransmitReceive(ads->hspix, &ds, &_midByte, 1, 1);
+  HAL_SPI_TransmitReceive(ads->hspix, &ds, &_lowByte, 1, 1);
+
+  // Combine all 3-bytes to 24-bit data using byte shifting.
+  value = ((uint32_t)_highByte << 16) + ((uint32_t)_midByte << 8) + ((uint32_t)_lowByte);
+  return value;
+}
+
+// Call this ONLY after RDATA command
+uint32_t ADS125X_read_int32(ADS125X_t *ads) {
+  uint32_t value = ADS125X_read_uint24(ads);
+
+  if (value & 0x00800000) {
+    value |= 0xff000000;
+  }
+
+  return value;
+}
+
+// Call this ONLY after RDATA command
+float ADS125X_read_float32(ADS125X_t *ads) {
+  uint32_t value = ADS125X_read_int32(ads);
+  return (float)value;
+}
+
+// Channel switching for single ended mode. Negative input channel are
+// automatically set to AINCOM
+void ADS125X_Channel_Set(ADS125X_t *ads, int8_t channel)
+{ 
+  ADS125X_ChannelDiff_Set(ads, channel, -1); 
+}
+
+// Channel Switching for differential mode. Use -1 to set input channel to
+// AINCOM
+
+uint8_t ADS125X_ChannelDiff_Set(ADS125X_t *ads, int8_t p_chan, int8_t n_chan)
+{
+  uint8_t MUX_CHANNEL;
+  uint8_t MUXP;
+  uint8_t MUXN;
+
+  switch (p_chan) {
+    case 0:
+      MUXP = ADS125X_MUXP_AIN0;
+      break;
+    case 1:
+      MUXP = ADS125X_MUXP_AIN1;
+      break;
+    case 2:
+      MUXP = ADS125X_MUXP_AIN2;
+      break;
+    case 3:
+      MUXP = ADS125X_MUXP_AIN3;
+      break;
+    case 4:
+      MUXP = ADS125X_MUXP_AIN4;
+      break;
+    case 5:
+      MUXP = ADS125X_MUXP_AIN5;
+      break;
+    case 6:
+      MUXP = ADS125X_MUXP_AIN6;
+      break;
+    case 7:
+      MUXP = ADS125X_MUXP_AIN7;
+      break;
+    default:
+      MUXP = ADS125X_MUXP_AINCOM;
+  }
+
+  switch (n_chan) {
+    case 0:
+      MUXN = ADS125X_MUXN_AIN0;
+      break;
+    case 1:
+      MUXN = ADS125X_MUXN_AIN1;
+      break;
+    case 2:
+      MUXN = ADS125X_MUXN_AIN2;
+      break;
+    case 3:
+      MUXN = ADS125X_MUXN_AIN3;
+      break;
+    case 4:
+      MUXN = ADS125X_MUXN_AIN4;
+      break;
+    case 5:
+      MUXN = ADS125X_MUXN_AIN5;
+      break;
+    case 6:
+      MUXN = ADS125X_MUXN_AIN6;
+      break;
+    case 7:
+      MUXN = ADS125X_MUXN_AIN7;
+      break;
+    default:
+      MUXN = ADS125X_MUXN_AINCOM;
+  }
+
+  MUX_CHANNEL = MUXP | MUXN;
+
+  ADS125X_CS(ads, 1);
+  ADS125X_Register_Write(ads, ADS125X_REG_MUX, &MUX_CHANNEL);
+  ADS125X_CMD_Send(ads, ADS125X_CMD_SYNC);
+  ADS125X_CMD_Send(ads, ADS125X_CMD_WAKEUP);
+  ADS125X_CS(ads, 0);
+  return 0;
+}
+
+/*
+uint8_t ADS125X_ChannelDiff_Set(ADS125X_t *ads, int8_t p_chan, int8_t n_chan)
+{
+	// read back
+	uint8_t spiDat[5];
+	
+	spiDat[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;	
+	spiDat[1] = 1 -1;  // payload length = 1 bytes -1
+	//spiDat[2] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
+	spiDat[2] = 
+	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
+	HAL_SPI_Transmit(&hspi2, spiDat, 3, 10);
+	HAL_Delay(1);
+	// read back
+	spiDat[0] = ADS125X_CMD_RREG | ADS125X_REG_MUX;
+	spiDat[1] = 1 -1; // read 1 bytes
+	while(HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET);  // wait for DRDY to go low
+	HAL_SPI_Transmit(&hspi2, spiDat, 2, 10);
+	HAL_Delay(1);
+	HAL_SPI_Receive(&hspi2, spiRx, 1, 10);
+	printf("MUX  : %#.2x\n", spiRx[0]);
+}
+*/
+
+
+uint8_t ADS125X_Init(ADS125X_t *ads, SPI_HandleTypeDef *hspi, uint8_t drate, uint8_t gain, uint8_t buffer_en)
+{
+  ads->hspix = hspi;
+  ads->pga = 1 << gain;
+	ADS125X_CMD_Send(ads, ADS125X_CMD_RESET);
+	HAL_Delay(5);
+  ADS125X_CMD_Send(ads, ADS125X_CMD_SDATAC);  // send out SDATAC command to stop continous reading mode.
+  ADS125X_Register_Write(ads, ADS125X_REG_DRATE, &drate);  // write data rate register
+  uint8_t bytemask = 7; // B00000111;
+  uint8_t adcon = 0;
+  ADS125X_Register_Read(ads, ADS125X_REG_ADCON, &adcon);
+  uint8_t byte2send = (adcon & ~bytemask) | gain;
+  ADS125X_Register_Write(ads, ADS125X_REG_ADCON, &byte2send);
+  if (buffer_en) {
+    uint8_t status = 0;
+    ADS125X_Register_Read(ads, ADS125X_REG_STATUS, &status);
+    status |= 2;  // bitSet(status, 1);
+    ADS125X_Register_Write(ads, ADS125X_REG_STATUS, &status);
+  }
+  ADS125X_CMD_Send(ads, ADS125X_CMD_SELFCAL);  // perform self calibration
+  ADS125X_DRDY_Wait(ads);
+  // wait ADS1256 to settle after self calibration
+	return 0;
+}
+
+uint8_t ADS125X_DRDY_Wait(ADS125X_t *ads){
+  while(HAL_GPIO_ReadPin(&ads->drdyPort, ads->drdyPin) == GPIO_PIN_SET);
+	return 0;
+}
+
