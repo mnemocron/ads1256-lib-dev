@@ -50,10 +50,12 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 ADS125X_t adc1;
+volatile uint8_t semaphoreNewData;
 volatile uint8_t dmaTx[16];
 volatile uint8_t dmaRx[8];
+volatile int32_t adsCode;
+volatile uint8_t dmaOffset;
 float volts;
-int32_t adsCode;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -105,7 +107,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+	semaphoreNewData = 1;
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -130,11 +132,6 @@ int main(void)
 	adc1.oscFreq = ADS125X_OSC_FREQ;
 	adc1.hspix = &hspi2;
 	
-	printf("\n");
-	printf("config...\n");
-	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_10SPS, ADS125X_PGA1, 0);
-	printf("...done\n");
-	
 	// CHANNEL 0/1
 	dmaTx[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;
 	dmaTx[1] = 0x00;
@@ -151,8 +148,20 @@ int main(void)
 	dmaTx[10] = ADS125X_CMD_WAKEUP;
 	dmaTx[11] = ADS125X_CMD_RDATA;
 	
+	printf("\n");
+	printf("config...\n");
+	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_2_5SPS, ADS125X_PGA1, 0);
+	printf("...done\n");
 	
+	dmaOffset = 0;
+	semaphoreNewData = 0;
 	
+	HAL_SPI_Transmit_IT(&hspi2, (uint8_t*)&dmaTx[5+dmaOffset], 1);  // RDATA
+	for(uint32_t i=0; i<0xfff; i++);
+	HAL_SPI_Receive_IT(&hspi2,  (uint8_t*)&dmaRx[0], 3);
+	for(uint32_t i=0; i<0xfff; i++);
+	adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
+	if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
 	
   /* USER CODE END 2 */
 
@@ -164,45 +173,43 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		
+		/*
+		while(semaphoreNewData == 0);
+		semaphoreNewData = 0;
+		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
+		printf("%d : %.5f\n", dmaOffset, volts);
+		*/
 		
 		// fast channel cycling
 		// CH0 / CH1 vorbereiten - CH2/CH3 auslesen
 		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
 		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[0], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[0], 4);  // 4 bytes
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[4], 1);  // WAKEUP
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[5], 1);  // RDATA
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		for(uint32_t i=0; i<500; i++);  // 6.5us DELAY
-		HAL_SPI_Receive_IT(&hspi2, &dmaRx[6], 3);
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8]; // umsortieren nach TransmitReceive
+		HAL_SPI_Transmit(&hspi2, &dmaTx[0+dmaOffset], 4, 1);  // 4 bytes // TIMEOUT of 1ms is too little with CLK prescaler = 64
+		HAL_SPI_Transmit(&hspi2, &dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
+		HAL_SPI_Transmit(&hspi2, &dmaTx[5+dmaOffset], 1, 1);  // RDATA
+		HAL_Delay(1);
+		HAL_SPI_Receive(&hspi2, &dmaRx[0], 3, 1);
 		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
 		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
 		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
 		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
 		printf("2/3 : %.5f\n", volts);
+		dmaOffset = 6;
 
 		// CH2 / CH3 vorbereiten - CH0/CH1 auslesen
 		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
 		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[9], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[0+6], 4);
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[4+6], 1);
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[5+6], 1);
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		for(uint32_t i=0; i<500; i++);  // 6.5us DELAY
-		HAL_SPI_Receive_IT(&hspi2, &dmaRx[6], 3);
-		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
-		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8];
+		HAL_SPI_Transmit(&hspi2, &dmaTx[0+dmaOffset], 4, 1);  // 4 bytes // TIMEOUT of 1ms is too little with CLK prescaler = 64
+		HAL_SPI_Transmit(&hspi2, &dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
+		HAL_SPI_Transmit(&hspi2, &dmaTx[5+dmaOffset], 1, 1);  // RDATA
+		HAL_Delay(1);
+		HAL_SPI_Receive(&hspi2, &dmaRx[0], 3, 1);
 		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
 		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
 		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
 		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
 		printf("0/1 : %.5f\t", volts);
+		dmaOffset = 0;
 		
 		
   }
@@ -276,7 +283,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -385,7 +392,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : SPI2_DRDY_Pin */
   GPIO_InitStruct.Pin = SPI2_DRDY_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(SPI2_DRDY_GPIO_Port, &GPIO_InitStruct);
 

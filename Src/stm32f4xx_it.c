@@ -47,6 +47,8 @@
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
+void __delay_transfer(void);
+void __delay_6us(void);
 
 /* USER CODE END PFP */
 
@@ -59,6 +61,11 @@
 extern DMA_HandleTypeDef hdma_spi2_rx;
 extern DMA_HandleTypeDef hdma_spi2_tx;
 extern SPI_HandleTypeDef hspi2;
+extern volatile uint8_t semaphoreNewData;
+extern volatile uint8_t dmaTx[16];
+extern volatile uint8_t dmaRx[8];
+extern volatile int32_t adsCode;
+extern volatile uint8_t dmaOffset;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -233,6 +240,25 @@ void DMA1_Stream4_IRQHandler(void)
 void EXTI9_5_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI9_5_IRQn 0 */
+	if(__HAL_GPIO_EXTI_GET_FLAG(GPIO_PIN_5)){
+		 HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+		/*
+		if(semaphoreNewData == 0){
+			uint8_t error = 0;
+			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[0+dmaOffset], 4, 1);  // 4 bytes
+			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
+			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[5+dmaOffset], 1, 1);  // RDATA
+			HAL_SPI_Receive(&hspi2,  (uint8_t*)&dmaRx[0], 3, 1);
+			__delay_transfer();
+			adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
+			if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
+			
+			if(dmaOffset == 0) dmaOffset = 6;
+			else dmaOffset = 0;
+			semaphoreNewData = 1;
+		}
+		*/
+  }
 
   /* USER CODE END EXTI9_5_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_5);
@@ -270,6 +296,13 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+void __delay_transfer(void){
+	for(uint32_t i=0; i<0xfff; i++);
+}
+
+void __delay_6us(void){
+	for(uint32_t i=0; i<500; i++);  // 6.5us DELAY
+}
 
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
