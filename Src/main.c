@@ -132,7 +132,7 @@ int main(void)
 	
 	printf("\n");
 	printf("config...\n");
-	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_2_5SPS, ADS125X_PGA1, 0);
+	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_10SPS, ADS125X_PGA1, 0);
 	printf("...done\n");
 	
 	// CHANNEL 0/1
@@ -164,23 +164,20 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		
-		// single channel with Library
-		/*
-		volts = ADS125X_ADC_ReadVolt(&adc1);
-		printf("%.5f\n", volts);
-		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-		HAL_Delay(250);
-		*/
 		
 		// fast channel cycling
 		// CH0 / CH1 vorbereiten - CH2/CH3 auslesen
 		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
 		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[0], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit(&hspi2, &dmaTx[0], 4, 10);  // 4 bytes
-		HAL_SPI_Transmit(&hspi2, &dmaTx[4], 1, 10);  // WAKEUP
-		HAL_SPI_Transmit(&hspi2, &dmaTx[5], 1, 10);  // RDATA
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, &dmaRx[6], 3, 10);
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[0], 4);  // 4 bytes
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[4], 1);  // WAKEUP
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[5], 1);  // RDATA
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		for(uint32_t i=0; i<500; i++);  // 6.5us DELAY
+		HAL_SPI_Receive_IT(&hspi2, &dmaRx[6], 3);
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
 		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8]; // umsortieren nach TransmitReceive
 		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
 		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
@@ -191,11 +188,15 @@ int main(void)
 		// CH2 / CH3 vorbereiten - CH0/CH1 auslesen
 		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
 		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[9], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit(&hspi2, &dmaTx[0+6], 4, 10);
-		HAL_SPI_Transmit(&hspi2, &dmaTx[4+6], 1, 10);
-		HAL_SPI_Transmit(&hspi2, &dmaTx[5+6], 1, 10);
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, &dmaRx[6], 3, 10);
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[0+6], 4);
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[4+6], 1);
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		HAL_SPI_Transmit_IT(&hspi2, &dmaTx[5+6], 1);
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
+		for(uint32_t i=0; i<500; i++);  // 6.5us DELAY
+		HAL_SPI_Receive_IT(&hspi2, &dmaRx[6], 3);
+		for(uint32_t i=0; i<0xfff; i++);  // 3.5us DELAY
 		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8];
 		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
 		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
@@ -203,22 +204,6 @@ int main(void)
 		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
 		printf("0/1 : %.5f\t", volts);
 		
-		/** output:
-		0/1 : 0.06816	2/3 : 2.46763
-		0/1 : 0.17074	2/3 : 2.46763
-		0/1 : 0.37218	2/3 : 2.46762
-		0/1 : 0.59556	2/3 : 2.46762
-		0/1 : 0.82086	2/3 : 2.46762
-		0/1 : 1.27503	2/3 : 2.46762
-		0/1 : 1.79477	2/3 : 2.46762
-		0/1 : 2.18731	2/3 : 2.46762
-		0/1 : 2.61273	2/3 : 2.46762
-		0/1 : 3.11570	2/3 : 2.46762
-		0/1 : 3.89098	2/3 : 2.46762
-		0/1 : 4.31520	2/3 : 2.46762
-		0/1 : 4.45299	2/3 : 2.46762
-		0/1 : 4.48357	2/3 : 2.46762
-		**/
 		
   }
   /* USER CODE END 3 */
