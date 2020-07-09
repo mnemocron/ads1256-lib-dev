@@ -34,8 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ADC_SAMPLEBUF_SIZE 32
-#define ADC_DMA_BUF_SIZE (7*ADC_SAMPLEBUF_SIZE)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,9 +50,10 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 ADS125X_t adc1;
-volatile uint8_t dmaTx[ADC_DMA_BUF_SIZE];
-volatile uint8_t dmaRx[ADC_DMA_BUF_SIZE];
-
+volatile uint8_t dmaTx[16];
+volatile uint8_t dmaRx[8];
+float volts;
+int32_t adsCode;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -136,29 +135,23 @@ int main(void)
 	ADS125X_Init(&adc1, &hspi2, ADS125X_DRATE_2_5SPS, ADS125X_PGA1, 0);
 	printf("...done\n");
 	
-	/**
-	i:   | 00,   01,   02,   03,   04,   05,   06,   07
-	data | WREG, AIN,  WKUP, RDAT, 0x00, 0x00, 0x00, ...  
-	*/
-	uint8_t chan = 0;
-	for(uint32_t i=0; i<ADC_DMA_BUF_SIZE; i++){
-		dmaTx[i] = 0;
-		if(i%7 == 0) dmaTx[i] = ADS125X_CMD_WREG | ADS125X_REG_MUX;
-		if(i%7 == 1){
-			if(chan == 0){
-				dmaTx[i] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
-				chan = 1;
-			}else{
-				dmaTx[i] = ADS125X_MUXP_AIN2 | ADS125X_MUXN_AIN3;
-				chan = 0;
-			}
-		}
-		if(i%7 == 2) dmaTx[i] = ADS125X_CMD_WAKEUP;
-		if(i%7 == 3) dmaTx[i] = ADS125X_CMD_RDATA;
-		
-		dmaRx[i] = 0;
-		printf("%#.2x\n", dmaTx[i]);
-	}
+	// CHANNEL 0/1
+	dmaTx[0] = ADS125X_CMD_WREG | ADS125X_REG_MUX;
+	dmaTx[1] = 0x00;
+	dmaTx[2] = ADS125X_MUXP_AIN0 | ADS125X_MUXN_AIN1;
+	dmaTx[3] = ADS125X_CMD_SYNC;
+	dmaTx[4] = ADS125X_CMD_WAKEUP;
+	dmaTx[5] = ADS125X_CMD_RDATA;
+	
+	// CHANNEL 2/3
+	dmaTx[6]  = ADS125X_CMD_WREG | ADS125X_REG_MUX;
+	dmaTx[7]  = 0x00;
+	dmaTx[8]  = ADS125X_MUXP_AIN2 | ADS125X_MUXN_AIN3;
+	dmaTx[9]  = ADS125X_CMD_SYNC;
+	dmaTx[10] = ADS125X_CMD_WAKEUP;
+	dmaTx[11] = ADS125X_CMD_RDATA;
+	
+	
 	
 	
   /* USER CODE END 2 */
@@ -170,8 +163,62 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		
+		// single channel with Library
+		/*
+		volts = ADS125X_ADC_ReadVolt(&adc1);
+		printf("%.5f\n", volts);
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 		HAL_Delay(250);
+		*/
+		
+		// fast channel cycling
+		// CH0 / CH1 vorbereiten - CH2/CH3 auslesen
+		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
+		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[0], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
+		HAL_SPI_Transmit(&hspi2, &dmaTx[0], 4, 10);  // 4 bytes
+		HAL_SPI_Transmit(&hspi2, &dmaTx[4], 1, 10);  // WAKEUP
+		HAL_SPI_Transmit(&hspi2, &dmaTx[5], 1, 10);  // RDATA
+		HAL_Delay(1);
+		HAL_SPI_Receive(&hspi2, &dmaRx[6], 3, 10);
+		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8]; // umsortieren nach TransmitReceive
+		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
+		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
+		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
+		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
+		printf("2/3 : %.5f\n", volts);
+
+		// CH2 / CH3 vorbereiten - CH0/CH1 auslesen
+		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
+		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[9], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
+		HAL_SPI_Transmit(&hspi2, &dmaTx[0+6], 4, 10);
+		HAL_SPI_Transmit(&hspi2, &dmaTx[4+6], 1, 10);
+		HAL_SPI_Transmit(&hspi2, &dmaTx[5+6], 1, 10);
+		HAL_Delay(1);
+		HAL_SPI_Receive(&hspi2, &dmaRx[6], 3, 10);
+		dmaRx[0] = dmaRx[6]; dmaRx[1] = dmaRx[7]; dmaRx[2] = dmaRx[8];
+		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
+		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
+		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
+		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
+		printf("0/1 : %.5f\t", volts);
+		
+		/** output:
+		0/1 : 0.06816	2/3 : 2.46763
+		0/1 : 0.17074	2/3 : 2.46763
+		0/1 : 0.37218	2/3 : 2.46762
+		0/1 : 0.59556	2/3 : 2.46762
+		0/1 : 0.82086	2/3 : 2.46762
+		0/1 : 1.27503	2/3 : 2.46762
+		0/1 : 1.79477	2/3 : 2.46762
+		0/1 : 2.18731	2/3 : 2.46762
+		0/1 : 2.61273	2/3 : 2.46762
+		0/1 : 3.11570	2/3 : 2.46762
+		0/1 : 3.89098	2/3 : 2.46762
+		0/1 : 4.31520	2/3 : 2.46762
+		0/1 : 4.45299	2/3 : 2.46762
+		0/1 : 4.48357	2/3 : 2.46762
+		**/
 		
   }
   /* USER CODE END 3 */
