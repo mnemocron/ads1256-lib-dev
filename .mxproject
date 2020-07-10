@@ -1,7 +1,7 @@
 [PreviousGenFiles]
-HeaderPath=C:/Users/simon/Documents/STM32/p6-spi-adc-test/Inc
+HeaderPath=C:/Users/simon/Documents/STM32/ads1256-lib-dev/Inc
 HeaderFiles=stm32f4xx_it.h;stm32f4xx_hal_conf.h;main.h;
-SourcePath=C:/Users/simon/Documents/STM32/p6-spi-adc-test/Src
+SourcePath=C:/Users/simon/Documents/STM32/ads1256-lib-dev/Src
 SourceFiles=stm32f4xx_it.c;stm32f4xx_hal_msp.c;main.c;
 
 [PreviousLibFiles]

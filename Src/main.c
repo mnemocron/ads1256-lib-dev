@@ -24,7 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include <ads1255.h>
+#include "ads1255.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,6 +46,8 @@ SPI_HandleTypeDef hspi2;
 DMA_HandleTypeDef hdma_spi2_rx;
 DMA_HandleTypeDef hdma_spi2_tx;
 
+TIM_HandleTypeDef htim4;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -55,7 +57,11 @@ volatile uint8_t dmaTx[16];
 volatile uint8_t dmaRx[8];
 volatile int32_t adsCode;
 volatile uint8_t dmaOffset;
+volatile uint8_t dmaTxState;
 float volts;
+
+// enum dmaState_t {dmaState_SetChannel, dmaState_Wakeup, dmaState_Rdata, dmaState_Rx};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,12 +70,13 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
-
+/* USER CODE BEGIN 0 */
 struct __FILE{
   int handle;
   /* Whatever you require here. If the only file you are using is */
@@ -88,8 +95,9 @@ int ferror(FILE *f){
   /* Your implementation of ferror(). */
   return 0;
 }
-/* USER CODE END 0 */
+/* PRINTF REDIRECT to UART END */
 
+/* USER CODE END 0 */
 /**
   * @brief  The application entry point.
   * @retval int
@@ -122,7 +130,9 @@ int main(void)
   MX_DMA_Init();
   MX_SPI2_Init();
   MX_USART2_UART_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+
 	
 	adc1.csPort = *SPI2_CS_GPIO_Port;
 	adc1.csPin  = SPI2_CS_Pin;
@@ -156,13 +166,16 @@ int main(void)
 	dmaOffset = 0;
 	semaphoreNewData = 0;
 	
+	/*
 	HAL_SPI_Transmit_IT(&hspi2, (uint8_t*)&dmaTx[5+dmaOffset], 1);  // RDATA
 	for(uint32_t i=0; i<0xfff; i++);
 	HAL_SPI_Receive_IT(&hspi2,  (uint8_t*)&dmaRx[0], 3);
 	for(uint32_t i=0; i<0xfff; i++);
 	adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
 	if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
-	
+	*/
+	dmaTxState = 0;
+	__HAL_GPIO_EXTI_CLEAR_IT(EXTI15_10_IRQn);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -173,48 +186,18 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		
-		/*
 		while(semaphoreNewData == 0);
 		semaphoreNewData = 0;
 		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
-		printf("%d : %.5f\n", dmaOffset, volts);
-		*/
-		
-		// fast channel cycling
-		// CH0 / CH1 vorbereiten - CH2/CH3 auslesen
-		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
-		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[0], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit(&hspi2, &dmaTx[0+dmaOffset], 4, 1);  // 4 bytes // TIMEOUT of 1ms is too little with CLK prescaler = 64
-		HAL_SPI_Transmit(&hspi2, &dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
-		HAL_SPI_Transmit(&hspi2, &dmaTx[5+dmaOffset], 1, 1);  // RDATA
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, &dmaRx[0], 3, 1);
-		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
-		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
-		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
-		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
-		printf("2/3 : %.5f\n", volts);
-		dmaOffset = 6;
-
-		// CH2 / CH3 vorbereiten - CH0/CH1 auslesen
-		while( HAL_GPIO_ReadPin(SPI2_DRDY_GPIO_Port, SPI2_DRDY_Pin) == GPIO_PIN_SET ); // wait DRDY
-		//HAL_SPI_TransmitReceive(&hspi2, &dmaTx[9], dmaRx, 9, 10);  // <-- ohne delay gehts nicht
-		HAL_SPI_Transmit(&hspi2, &dmaTx[0+dmaOffset], 4, 1);  // 4 bytes // TIMEOUT of 1ms is too little with CLK prescaler = 64
-		HAL_SPI_Transmit(&hspi2, &dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
-		HAL_SPI_Transmit(&hspi2, &dmaTx[5+dmaOffset], 1, 1);  // RDATA
-		HAL_Delay(1);
-		HAL_SPI_Receive(&hspi2, &dmaRx[0], 3, 1);
-		adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
-		if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
-		// do all calculations in float. don't change the order of factors --> (adsCode/0x7fffff) will always return 0
-		volts = ( (float)adsCode * (2.0f * 2.5f) ) / ( 1.0f * 8388607.0f );  // 0x7fffff = 8388607.0f
-		printf("0/1 : %.5f\t", volts);
-		dmaOffset = 0;
+		if(dmaOffset == 0){
+			printf("%.5f\n", volts);
+		} else {
+			printf("%.5f \t", volts);
+		}
 		
 		
   }
   /* USER CODE END 3 */
-	
 }
 
 /**
@@ -295,6 +278,51 @@ static void MX_SPI2_Init(void)
   /* USER CODE BEGIN SPI2_Init 2 */
 
   /* USER CODE END SPI2_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 1000-1;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 100-1;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
 
 }
 

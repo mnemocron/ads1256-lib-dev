@@ -23,6 +23,7 @@
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "ads1255.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,13 +62,15 @@ void __delay_6us(void);
 extern DMA_HandleTypeDef hdma_spi2_rx;
 extern DMA_HandleTypeDef hdma_spi2_tx;
 extern SPI_HandleTypeDef hspi2;
+extern TIM_HandleTypeDef htim4;
+/* USER CODE BEGIN EV */
+extern ADS125X_t adc1;
 extern volatile uint8_t semaphoreNewData;
 extern volatile uint8_t dmaTx[16];
 extern volatile uint8_t dmaRx[8];
 extern volatile int32_t adsCode;
 extern volatile uint8_t dmaOffset;
-/* USER CODE BEGIN EV */
-
+extern volatile uint8_t dmaTxState;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -226,6 +229,11 @@ void DMA1_Stream3_IRQHandler(void)
 void DMA1_Stream4_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream4_IRQn 0 */
+	
+	/** DMA Tx Complete */
+
+	
+	
 
   /* USER CODE END DMA1_Stream4_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_spi2_tx);
@@ -241,23 +249,15 @@ void EXTI9_5_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI9_5_IRQn 0 */
 	if(__HAL_GPIO_EXTI_GET_FLAG(GPIO_PIN_5)){
-		 HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-		/*
-		if(semaphoreNewData == 0){
-			uint8_t error = 0;
-			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[0+dmaOffset], 4, 1);  // 4 bytes
-			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[4+dmaOffset], 1, 1);  // WAKEUP
-			HAL_SPI_Transmit(&hspi2, (uint8_t*)&dmaTx[5+dmaOffset], 1, 1);  // RDATA
-			HAL_SPI_Receive(&hspi2,  (uint8_t*)&dmaRx[0], 3, 1);
-			__delay_transfer();
-			adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
-			if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
+		
+		// HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+		if(dmaTxState == 0){
+			for(uint16_t i=0; i<0xff; i++) __nop();
+			HAL_SPI_Transmit_DMA(adc1.hspix, (uint8_t*)&dmaTx[0+dmaOffset], 4); // MUX
+			dmaTxState ++;
+		} else {
 			
-			if(dmaOffset == 0) dmaOffset = 6;
-			else dmaOffset = 0;
-			semaphoreNewData = 1;
 		}
-		*/
   }
 
   /* USER CODE END EXTI9_5_IRQn 0 */
@@ -265,6 +265,20 @@ void EXTI9_5_IRQHandler(void)
   /* USER CODE BEGIN EXTI9_5_IRQn 1 */
 
   /* USER CODE END EXTI9_5_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM4 global interrupt.
+  */
+void TIM4_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM4_IRQn 0 */
+
+  /* USER CODE END TIM4_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim4);
+  /* USER CODE BEGIN TIM4_IRQn 1 */
+
+  /* USER CODE END TIM4_IRQn 1 */
 }
 
 /**
@@ -296,6 +310,32 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
+	if(hspi == &hspi2){
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+		if(dmaTxState == 1){
+			for(uint16_t i=0; i<128; i++);
+			HAL_SPI_Transmit_DMA(adc1.hspix, (uint8_t*)&dmaTx[4+dmaOffset], 1); // WAKEUP
+		} else if(dmaTxState == 2) {
+			for(uint16_t i=0; i<128; i++);
+			HAL_SPI_Transmit_DMA(adc1.hspix, (uint8_t*)&dmaTx[5+dmaOffset], 1); // RDATA
+		} else if(dmaTxState == 3) {
+			for(uint16_t i=0; i<128; i++);
+			HAL_SPI_Receive_DMA(adc1.hspix, (uint8_t*)&dmaRx[0], 3); // RDATA
+			adsCode = (dmaRx[0] << 16) | (dmaRx[1] << 8) | (dmaRx[2]);
+			if(adsCode & 0x800000) adsCode |= 0xff000000;  // fix 2's complement
+			
+			if(dmaOffset == 0) dmaOffset = 6;
+			else dmaOffset = 0;
+			semaphoreNewData = 1;
+		}
+		dmaTxState ++;
+		if(dmaTxState > 3) dmaTxState = 0;
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+	}
+}
+
+
 void __delay_transfer(void){
 	for(uint32_t i=0; i<0xfff; i++);
 }
